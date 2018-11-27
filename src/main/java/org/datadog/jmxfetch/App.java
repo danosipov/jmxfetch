@@ -13,6 +13,14 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Future;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 import java.util.Iterator;
@@ -21,6 +29,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.lang.InterruptedException;
 
 import javax.security.auth.login.FailedLoginException;
 
@@ -51,6 +60,7 @@ public class App {
     private static final String AD_LEGACY_CONFIG_TERM = "#### SERVICE-DISCOVERY TERM ####";
     private static final int AD_MAX_NAME_LEN = 80;
     private static final int AD_MAX_MAG_INSTANCES = 4; // 1000 instances ought to be enough for anyone
+    private static final int THREAD_POOL_SIZE = 3;
 
     private static int loopCounter;
     private int lastJSONConfigTS;
@@ -60,6 +70,7 @@ public class App {
     private ArrayList<Instance> instances = new ArrayList<Instance>();
     private LinkedList<Instance> brokenInstances = new LinkedList<Instance>();
     private AtomicBoolean reinit = new AtomicBoolean(false);
+    private ExecutorService es = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
 
     private AppConfig appConfig;
     private HttpClient client;
@@ -263,8 +274,6 @@ public class App {
 
     void start() {
         // Main Loop that will periodically collect metrics from the JMX Server
-        long start_ms = System.currentTimeMillis();
-        long delta_s = 0;
         FileInputStream adPipe = null;
 
         if(appConfig.getAutoDiscoveryPipeEnabled()) {
@@ -338,11 +347,12 @@ public class App {
                 configs = getConfigs(appConfig);
                 init(true);
             }
-            long length = System.currentTimeMillis() - start;
-            LOGGER.debug("Iteration ran in " + length + " ms");
+            long duration = System.currentTimeMillis() - start;
+            LOGGER.debug("Iteration ran in " + duration + " ms");
             // Sleep until next collection
             try {
-                int loopPeriod = appConfig.getCheckPeriod();
+                long loopPeriod = appConfig.getCheckPeriod();
+                long sleepPeriod = (duration > loopPeriod ) ? loopPeriod : loopPeriod  - duration;
                 LOGGER.debug("Sleeping for " + loopPeriod + " ms.");
                 Thread.sleep(loopPeriod);
             } catch (InterruptedException e) {
@@ -355,59 +365,81 @@ public class App {
         loopCounter++;
         Reporter reporter = appConfig.getReporter();
 
-        Iterator<Instance> it = instances.iterator();
-        while (it.hasNext()) {
-            Instance instance = it.next();
-            LinkedList<HashMap<String, Object>> metrics;
-            String instanceStatus = Status.STATUS_OK;
-            String scStatus = Status.STATUS_OK;
-            String instanceMessage = null;
-            int numberOfMetrics = 0;
+        List<Future<LinkedList<HashMap<String, Object>>>> results;
 
-            try {
-            	if (!instance.timeToCollect()) {
-            		LOGGER.debug("it is not time to collect, skipping run for " + instance.getName());
-            		continue;
-            	}
+        int timeout = appConfig.getCheckPeriod();  // In milliseconds
 
-                metrics = instance.getMetrics();
-                numberOfMetrics = metrics.size();
+        try {
+            results = es.invokeAll(instances, timeout, TimeUnit.MILLISECONDS);
 
-                if (numberOfMetrics == 0) {
-                    instanceMessage = "Instance " + instance + " didn't return any metrics";
-                    LOGGER.warn(instanceMessage);
+            for (int i=0; i<results.size(); i++) {
+                int numberOfMetrics = 0;
+                String instanceStatus = Status.STATUS_OK;
+                String scStatus = Status.STATUS_OK;
+                String instanceMessage = null;
+                LinkedList<HashMap<String, Object>> metrics;
+
+                Future<LinkedList<HashMap<String, Object>>> future = results.get(i);
+                Instance instance = instances.get(i); 
+
+                try {
+                    if (future.isDone()) {
+                        metrics = future.get();
+                        numberOfMetrics = metrics.size();
+
+                        if (numberOfMetrics == 0) {
+                            instanceMessage = "Instance " + instance + " didn't return any metrics";
+                            LOGGER.warn(instanceMessage);
+                            instanceStatus = Status.STATUS_ERROR;
+                        } else if (instance.isLimitReached()) {
+                            instanceMessage = "Number of returned metrics is too high for instance: "
+                                    + instance.getName()
+                                    + ". Please read http://docs.datadoghq.com/integrations/java/ or get in touch with Datadog "
+                                    + "Support for more details. Truncating to " + instance.getMaxNumberOfMetrics() + " metrics.";
+
+                            instanceStatus = Status.STATUS_WARNING;
+                            // We don't want to log the warning at every iteration so we use this custom logger.
+                            CustomLogger.laconic(LOGGER, Level.WARN, instanceMessage, 0);
+                        }
+
+                        if(numberOfMetrics > 0)
+                            reporter.sendMetrics(metrics, instance.getName(), instance.getCanonicalRateConfig());
+
+                    } else if (future.isCancelled()) {
+                        instanceMessage = "metric collection did not complete in time for: " + instance;
+                        LOGGER.warn(instanceMessage);
+                        instanceStatus = Status.STATUS_ERROR;
+                    }
+                } catch (CancellationException ee){
+                    instanceMessage = "Unable to refresh bean list for instance " + instance;
+                    LOGGER.warn(instanceMessage, ee);
                     instanceStatus = Status.STATUS_ERROR;
-                    scStatus = Status.STATUS_ERROR;
-                    brokenInstances.add(instance);
-                } else if (instance.isLimitReached()) {
-                    instanceMessage = "Number of returned metrics is too high for instance: "
-                            + instance.getName()
-                            + ". Please read http://docs.datadoghq.com/integrations/java/ or get in touch with Datadog "
-                            + "Support for more details. Truncating to " + instance.getMaxNumberOfMetrics() + " metrics.";
+                } catch (ExecutionException ee){
+                    instanceMessage = "Unable to refresh bean list for instance " + instance;
+                    LOGGER.warn(instanceMessage, ee);
+                    instanceStatus = Status.STATUS_ERROR;
+                } catch (InterruptedException ie) {
+                    instanceMessage = "Instance was interrupted completing bean list refresh for instance " + instance;
+                    LOGGER.warn(instanceMessage, ie);
+                    instanceStatus = Status.STATUS_ERROR;
+                } finally {
+                    if (instanceStatus == Status.STATUS_ERROR) {
+                        scStatus = Status.STATUS_ERROR;
+                        brokenInstances.add(instance);
+                    }
 
-                    instanceStatus = Status.STATUS_WARNING;
-                    // We don't want to log the warning at every iteration so we use this custom logger.
-                    CustomLogger.laconic(LOGGER, Level.WARN, instanceMessage, 0);
+                    this.reportStatus(appConfig, reporter, instance, numberOfMetrics, instanceMessage, instanceStatus);
+                    this.sendServiceCheck(reporter, instance, instanceMessage, scStatus);
                 }
-
-                if(numberOfMetrics > 0)
-                    reporter.sendMetrics(metrics, instance.getName(), instance.getCanonicalRateConfig());
-
-            } catch (IOException e) {
-                instanceMessage = "Unable to refresh bean list for instance " + instance;
-                LOGGER.warn(instanceMessage, e);
-                instanceStatus = Status.STATUS_ERROR;
-                scStatus = Status.STATUS_ERROR;
-                brokenInstances.add(instance);
             }
-
-            this.reportStatus(appConfig, reporter, instance, numberOfMetrics, instanceMessage, instanceStatus);
-            this.sendServiceCheck(reporter, instance, instanceMessage, scStatus);
+        } catch (RejectedExecutionException ree){
+            LOGGER.warn(ree);
+        } catch (InterruptedException ie) {
+            LOGGER.warn(ie);
         }
 
-
         // Iterate over broken" instances to fix them by resetting them
-        it = brokenInstances.iterator();
+        Iterator<Instance> it = brokenInstances.iterator();
         while (it.hasNext()) {
             Instance instance = it.next();
 
