@@ -362,6 +362,11 @@ public class App {
     }
 
     public void doIteration() {
+        int numberOfMetrics = 0;
+        String instanceStatus = null;
+        String scStatus = null;
+        String instanceMessage = null;
+
         loopCounter++;
         Reporter reporter = appConfig.getReporter();
 
@@ -373,11 +378,9 @@ public class App {
             results = es.invokeAll(instances, timeout, TimeUnit.MILLISECONDS);
 
             for (int i=0; i<results.size(); i++) {
-                int numberOfMetrics = 0;
-                String instanceStatus = Status.STATUS_OK;
-                String scStatus = Status.STATUS_OK;
-                String instanceMessage = null;
                 LinkedList<HashMap<String, Object>> metrics;
+                instanceStatus = Status.STATUS_OK;
+                scStatus = Status.STATUS_OK;
 
                 Future<LinkedList<HashMap<String, Object>>> future = results.get(i);
                 Instance instance = instances.get(i); 
@@ -410,12 +413,12 @@ public class App {
                         LOGGER.warn(instanceMessage);
                         instanceStatus = Status.STATUS_ERROR;
                     }
-                } catch (CancellationException ee){
+                } catch (ExecutionException ee){
                     instanceMessage = "Unable to refresh bean list for instance " + instance;
                     LOGGER.warn(instanceMessage, ee);
                     instanceStatus = Status.STATUS_ERROR;
-                } catch (ExecutionException ee){
-                    instanceMessage = "Unable to refresh bean list for instance " + instance;
+                } catch (CancellationException ee){
+                    instanceMessage = "Instance bean list refresh was canceled for instance " + instance;
                     LOGGER.warn(instanceMessage, ee);
                     instanceStatus = Status.STATUS_ERROR;
                 } catch (InterruptedException ie) {
@@ -432,10 +435,17 @@ public class App {
                     this.sendServiceCheck(reporter, instance, instanceMessage, scStatus);
                 }
             }
-        } catch (RejectedExecutionException ree){
-            LOGGER.warn(ree);
-        } catch (InterruptedException ie) {
-            LOGGER.warn(ie);
+        } catch (Exception e){
+            LOGGER.warn("JMXFetch internal error invoking concurrent tasks: ", e);
+
+            instanceStatus = Status.STATUS_ERROR;
+            scStatus = Status.STATUS_ERROR;
+            for (Instance instance : instances) {
+                // don't add instances to broken instances, issue was internal
+                instanceMessage = "Internal JMXFetch error refreshing bean list for instance " + instance;
+                this.reportStatus(appConfig, reporter, instance, 0, instanceMessage, instanceStatus);
+                this.sendServiceCheck(reporter, instance, instanceMessage, scStatus);
+            }
         }
 
         // Iterate over broken" instances to fix them by resetting them
