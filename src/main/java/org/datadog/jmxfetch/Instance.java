@@ -301,7 +301,6 @@ public class Instance implements Callable<LinkedList<HashMap<String, Object>>> {
 
             // Maybe raise an exception here instead... 
             return new LinkedList<HashMap<String, Object>>();
-            //return new LinkedList<HashMap<String, Object>>(Collections.emptyList());
         }
 
         return this.getMetrics();
