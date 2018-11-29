@@ -36,7 +36,9 @@ public class AppConfig {
     private static final String AD_PIPE_NAME = "dd-auto_discovery";
     private static final String AD_LAUNCH_FILE = "jmx.launch";
 
-    private static final int THREAD_POOL_SIZE = 3;
+    private static final int DEFAULT_THREAD_POOL_SIZE = 3;
+    private static final int DEFAULT_COLLECTION_TO_S = 60;
+    private static final int DEFAULT_RECONNECTION_TO_S = 10;
 
     @Parameter(names = {"--help", "-h"},
             description = "Display this help page",
@@ -87,7 +89,19 @@ public class AppConfig {
             description = "The size of the thread pool",
             validateWith = PositiveIntegerValidator.class,
             required = false)
-    private int threadPoolSize = THREAD_POOL_SIZE;
+    private int threadPoolSize = DEFAULT_THREAD_POOL_SIZE;
+
+    @Parameter(names = {"--collection_timeout", "-x"},
+            description = "The concurrent collection timeout in seconds",
+            validateWith = PositiveIntegerValidator.class,
+            required = false)
+    private int collectionTO = DEFAULT_COLLECTION_TO_S;
+
+    @Parameter(names = {"--reconnection_timeout", "-y"},
+            description = "The reconnection timeout in seconds",
+            validateWith = PositiveIntegerValidator.class,
+            required = false)
+    private int reconnectionTO = DEFAULT_RECONNECTION_TO_S;
 
     @Parameter(names = {"--ad_enabled", "--sd_enabled", "-w"},
             description = "Enable Auto Discovery.",
@@ -184,6 +198,14 @@ public class AppConfig {
 
     public int getThreadPoolSize() {
         return threadPoolSize;
+    }
+
+    public int getCollectionTimeout() {
+        return collectionTO;
+    }
+
+    public int getReconnectionTimeout() {
+        return reconnectionTO;
     }
 
     public String getIPCHost() {
