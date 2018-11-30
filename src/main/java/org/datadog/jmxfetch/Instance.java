@@ -27,7 +27,7 @@ import org.apache.log4j.Logger;
 import org.datadog.jmxfetch.reporter.Reporter;
 import org.yaml.snakeyaml.Yaml;
 
-public class Instance implements Callable<LinkedList<HashMap<String, Object>>> {
+public class Instance {
     private final static Logger LOGGER = Logger.getLogger(Instance.class.getName());
     private final static List<String> SIMPLE_TYPES = Arrays.asList("long",
             "java.lang.String", "int", "float", "double", "java.lang.Double","java.lang.Float", "java.lang.Integer", "java.lang.Long",
@@ -293,19 +293,6 @@ public class Instance implements Callable<LinkedList<HashMap<String, Object>>> {
         return metrics;
     }
 
-    @Override
-    public LinkedList<HashMap<String, Object>> call() throws Exception {
-
-        if (!this.timeToCollect()) {
-            LOGGER.debug("it is not time to collect, skipping run");
-
-            // Maybe raise an exception here instead... 
-            return new LinkedList<HashMap<String, Object>>();
-        }
-
-        return this.getMetrics();
-    }
-    
     public boolean timeToCollect() {
     	if (this.minCollectionPeriod == null) {
     		return true;
@@ -507,7 +494,6 @@ public class Instance implements Callable<LinkedList<HashMap<String, Object>>> {
 
             @Override
             public void run() {
-                // code goes here.
                 instance.appConfig = null;
                 if (instance.connection != null) {
                     instance.connection.closeConnector();
