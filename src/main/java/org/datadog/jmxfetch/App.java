@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -533,6 +534,14 @@ public class App {
     private void fixBrokenInstances(Reporter reporter) {
         List<Callable<Void>> fixInstanceTasks = new ArrayList<Callable<Void>>();
         List<Instance> newInstances = new ArrayList<Instance>();
+
+        // We shuffle the broken instances to address starvation if first M
+        // instances are always broken and our thread pool is M threads deep, 
+        // then (N-M) instances could potentially never be fixed. This will
+        // help address that problem. 
+        //
+        // N should be relatively small so the overhead should be acceptable.
+        Collections.shuffle(brokenInstances);
         for(Instance instance : brokenInstances) {
             // Clearing rates aggregator so we won't compute wrong rates if we can reconnect
             reporter.clearRatesAggregator(instance.getName());
