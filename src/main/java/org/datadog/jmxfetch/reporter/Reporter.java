@@ -84,7 +84,7 @@ public abstract class Reporter {
             // StatsD doesn't support rate metrics so we need to have our own aggregator to compute rates
             if ("gauge".equals(metricType) || "histogram".equals(metricType)) {
                 sendMetricPoint(metricType, metricName, currentValue, tags);
-            } else if ("count".equals(metricType)) {
+            } else if ("monotonic_count".equals(metricType)) {
                 String key = generateId(metric);
                 if (!instanceCountersAggregator.containsKey(key)) {
                     instanceCountersAggregator.put(key,  currentValue.longValue());
@@ -100,8 +100,8 @@ public abstract class Reporter {
 
                 instanceCountersAggregator.put(key, currentValue.longValue());
 
-                if (delta < 0 && canonicalRate) {
-                    LOGGER.info("Counter " + metricName + " has been reset and canonical rate is enabled - not submitting.");
+                if (delta < 0) {
+                    LOGGER.info("Counter " + metricName + " has been reset - not submitting.");
                     continue;
                 }
                 sendMetricPoint(metricType, metricName, delta, tags);
