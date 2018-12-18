@@ -59,6 +59,7 @@ public class Instance {
     private Connection connection;
     private AppConfig appConfig;
     private Boolean cassandraAliasing;
+    private boolean emptyDefaultHostname;
 
 
     public Instance(Instance instance, AppConfig appConfig) {
@@ -99,6 +100,13 @@ public class Instance {
         if (this.minCollectionPeriod == null && initConfig != null) {
         	this.minCollectionPeriod = (Integer) initConfig.get("min_collection_interval");
         }
+
+        try {
+            this.emptyDefaultHostname = (Boolean) this.instanceMap.get("empty_default_hostname");
+        } catch (NullPointerException e) {
+            this.emptyDefaultHostname = false;
+        }
+
         this.lastCollectionTime = 0;
         this.lastRefreshTime = 0;
         this.limitReached = false;
@@ -144,7 +152,21 @@ public class Instance {
 
         loadMetricConfigFiles(appConfig, configurationList);
 
-        ArrayList<LinkedHashMap<String, Object>> defaultConf = (ArrayList<LinkedHashMap<String, Object>>) new Yaml().load(this.getClass().getResourceAsStream("default-jmx-metrics.yaml"));
+        String gcMetricConfig = "old-gc-default-jmx-metrics.yaml";
+
+        if (this.initConfig != null) {
+            Boolean newGcMetrics = (Boolean) this.initConfig.get("new_gc_metrics");
+            if (newGcMetrics != null && newGcMetrics) {
+                gcMetricConfig = "new-gc-default-jmx-metrics.yaml";
+            }
+        }
+
+        loadDefaultConfig("default-jmx-metrics.yaml");
+        loadDefaultConfig(gcMetricConfig);
+    }
+
+    private void loadDefaultConfig(String configResourcePath) {
+        ArrayList<LinkedHashMap<String, Object>> defaultConf = (ArrayList<LinkedHashMap<String, Object>>) new Yaml().load(this.getClass().getResourceAsStream(configResourcePath));
         for (LinkedHashMap<String, Object> conf : defaultConf) {
             configurationList.add(new Configuration(conf));
         }
@@ -353,13 +375,13 @@ public class Instance {
                 String attributeType = attributeInfo.getType();
                 if (SIMPLE_TYPES.contains(attributeType)) {
                     LOGGER.debug(ATTRIBUTE + beanName + " : " + attributeInfo + " has attributeInfo simple type");
-                    jmxAttribute = new JMXSimpleAttribute(attributeInfo, beanName, instanceName, connection, tags, cassandraAliasing);
+                    jmxAttribute = new JMXSimpleAttribute(attributeInfo, beanName, instanceName, connection, tags, cassandraAliasing, emptyDefaultHostname);
                 } else if (COMPOSED_TYPES.contains(attributeType)) {
                     LOGGER.debug(ATTRIBUTE + beanName + " : " + attributeInfo + " has attributeInfo composite type");
-                    jmxAttribute = new JMXComplexAttribute(attributeInfo, beanName, instanceName, connection, tags);
+                    jmxAttribute = new JMXComplexAttribute(attributeInfo, beanName, instanceName, connection, tags, emptyDefaultHostname);
                 } else if (MULTI_TYPES.contains(attributeType)) {
                     LOGGER.debug(ATTRIBUTE + beanName + " : " + attributeInfo + " has attributeInfo tabular type");
-                    jmxAttribute = new JMXTabularAttribute(attributeInfo, beanName, instanceName, connection, tags);
+                    jmxAttribute = new JMXTabularAttribute(attributeInfo, beanName, instanceName, connection, tags, emptyDefaultHostname);
                 } else {
                     try {
                         LOGGER.debug(ATTRIBUTE + beanName + " : " + attributeInfo + " has an unsupported type: " + attributeType);
@@ -450,6 +472,10 @@ public class Instance {
             }
         }
         tags.add("instance:" + this.instanceName);
+
+        if (this.emptyDefaultHostname) {
+            tags.add("host:");
+        }
         return tags.toArray(new String[tags.size()]);
     }
 
