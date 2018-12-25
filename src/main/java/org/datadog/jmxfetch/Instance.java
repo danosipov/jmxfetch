@@ -243,10 +243,10 @@ public class Instance {
 
     public Connection getConnection(LinkedHashMap<String, Object> connectionParams, boolean forceNewConnection) throws IOException {
         if (connection == null || !connection.isAlive()) {
-            LOGGER.info("Connection closed or does not exist. Creating a new connection!");
+            LOGGER.info("Connection closed or does not exist. Attempting to create a new connection...");
             return ConnectionFactory.createConnection(connectionParams);
         } else if (forceNewConnection) {
-                LOGGER.info("Forcing the creation of a new connection");
+                LOGGER.info("Forcing a new connection, attempting to create...");
                 connection.closeConnector();
                 return ConnectionFactory.createConnection(connectionParams);
         }
@@ -256,9 +256,11 @@ public class Instance {
     public void init(boolean forceNewConnection) throws IOException, FailedLoginException, SecurityException {
         LOGGER.info("Trying to connect to JMX Server at " + this.toString());
         connection = getConnection(instanceMap, forceNewConnection);
-        LOGGER.info("Connected to JMX Server at " + this.toString());
+        LOGGER.info("Trying to collect bean list for the first time for JMX Server at " + this.toString());
         this.refreshBeansList();
+        LOGGER.info("Connected to JMX Server at " + this.toString());
         this.getMatchingAttributes();
+        LOGGER.info("Done initializing JMX Server at " + this.toString());
     }
 
     @Override
@@ -325,7 +327,7 @@ public class Instance {
     	}
     }
 
-    private void getMatchingAttributes() {
+    private void getMatchingAttributes() throws IOException {
         limitReached = false;
         Reporter reporter = appConfig.getReporter();
         String action = appConfig.getAction();
@@ -352,6 +354,13 @@ public class Instance {
                 // Get all the attributes for bean_name
                 LOGGER.debug("Getting attributes for bean: " + beanName);
                 attributeInfos = connection.getAttributesForBean(beanName);
+            } catch (IOException e) {
+                // we should not continue
+                LOGGER.warn("Cannot get bean attributes " + e.getMessage());
+                if (e.getMessage() == connection.CLOSED_CLIENT_CAUSE) {
+                    throw e;
+                }
+                continue;
             } catch (Exception e) {
                 LOGGER.warn("Cannot get bean attributes " + e.getMessage());
                 continue;

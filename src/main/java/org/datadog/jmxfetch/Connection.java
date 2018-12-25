@@ -31,6 +31,7 @@ import org.apache.log4j.Logger;
 public class Connection {
     private static final long CONNECTION_TIMEOUT = 10000;
     private static final long JMX_TIMEOUT = 20;
+    public static final String CLOSED_CLIENT_CAUSE = "The client has been closed";
     private final static Logger LOGGER = Logger.getLogger(Connection.class.getName());
     private static final ThreadFactory daemonThreadFactory = new DaemonThreadFactory();
     private JMXConnector connector;
